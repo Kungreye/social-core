@@ -34,11 +34,15 @@ class GithubOAuth2(BaseOAuth2):
         fullname, first_name, last_name = self.get_user_names(
             response.get('name')
         )
-        return {'username': response.get('login'),
+        return {'name': response.get('login'),
                 'email': response.get('email') or '',
                 'fullname': fullname,
                 'first_name': first_name,
-                'last_name': last_name}
+                'last_name': last_name,
+                'avatar_url': response.get('avatar_url', ''),
+                'profile_url': response.get('html_url', ''),
+                'prefile_type': 'github'
+        }
 
     def user_data(self, access_token, *args, **kwargs):
         """Loads user data from service"""

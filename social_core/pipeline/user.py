@@ -1,17 +1,22 @@
 from uuid import uuid4
 
+from flask_security import logout_user, login_user, current_user
+
 from ..utils import slugify, module_member
 
 
-USER_FIELDS = ['username', 'email']
+USER_FIELDS = ['name', 'email', 'avatar_url', 'profile_url', 'prefile_type']
 
 
 def get_username(strategy, details, backend, user=None, *args, **kwargs):
-    if 'username' not in backend.setting('USER_FIELDS', USER_FIELDS):
+    if 'name' not in backend.setting('USER_FIELDS', USER_FIELDS):
         return
     storage = strategy.storage
+    social = None
+    if user:
+        social = backend.strategy.storage.user.get_social_auth_for_user(user).first()
 
-    if not user:
+    if not user or (social and social.provider != backend.name):
         email_as_username = strategy.setting('USERNAME_IS_FULL_EMAIL', False)
         uuid_length = strategy.setting('UUID_LENGTH', 16)
         max_length = storage.user.username_max_length()
@@ -38,8 +43,8 @@ def get_username(strategy, details, backend, user=None, *args, **kwargs):
 
         if email_as_username and details.get('email'):
             username = details['email']
-        elif details.get('username'):
-            username = details['username']
+        elif details.get('name'):
+            username = details['name']
         else:
             username = uuid4().hex
 
@@ -53,26 +58,38 @@ def get_username(strategy, details, backend, user=None, *args, **kwargs):
         # username is cut to avoid any field max_length.
         # The final_username may be empty and will skip the loop.
         while not final_username or \
-              storage.user.user_exists(username=final_username):
+              storage.user.user_exists(name=final_username):
             username = short_username + uuid4().hex[:uuid_length]
             final_username = slug_func(clean_func(username[:max_length]))
     else:
         final_username = storage.user.get_username(user)
-    return {'username': final_username}
+    return {'name': final_username}
 
 
 def create_user(strategy, details, backend, user=None, *args, **kwargs):
+    relogin = False
     if user:
-        return {'is_new': False}
+        social = backend.strategy.storage.user.get_social_auth_for_user(user).first()
+        if backend.name == social.provider and getattr(
+                user, '{}_url'.format(backend.name)) == \
+                details.get('profile_url'):
+            return {'is_new': False}
+        else:
+            relogin = True
 
     fields = dict((name, kwargs.get(name, details.get(name)))
                   for name in backend.setting('USER_FIELDS', USER_FIELDS))
     if not fields:
         return
 
+    user = strategy.create_user(**fields)
+    if relogin:
+        logout_user()
+        login_user(user)
+
     return {
         'is_new': True,
-        'user': strategy.create_user(**fields)
+        'user': user
     }
 
 
@@ -82,7 +99,7 @@ def user_details(strategy, details, user=None, *args, **kwargs):
         return
 
     changed = False  # flag to track changes
-    protected = ('username', 'id', 'pk', 'email') + \
+    protected = ('name', 'id', 'pk', 'email') + \
                 tuple(strategy.setting('PROTECTED_USER_FIELDS', []))
 
     # Update user model attributes with the new data sent by the current
